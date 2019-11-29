@@ -1,22 +1,14 @@
 package com.marstalk.beanfactory;
 
 import com.marstalk.annotation.Autowired;
-import com.marstalk.annotation.Component;
-import com.marstalk.annotation.ComponentScan;
+import com.marstalk.parser.ConfigurationClassParser;
 import com.marstalk.register.BeanDefinition;
-import com.marstalk.utils.FileUtils;
-import com.marstalk.utils.StringUtils;
+import com.marstalk.utils.ObjectFactory;
 
-import java.io.File;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.ArrayList;
 
 /**
  * @author Mars
@@ -24,6 +16,7 @@ import java.util.stream.Collectors;
  */
 public class ApplicationContext implements BeanFactory {
     private DefaultListableBeanFactory defaultListableBeanFactory;
+    private ConfigurationClassParser parser;
 
     public ApplicationContext() {
         this.defaultListableBeanFactory = new DefaultListableBeanFactory();
@@ -31,40 +24,69 @@ public class ApplicationContext implements BeanFactory {
 
     public ApplicationContext(Class clazz) {
         this();
+        parser = new ConfigurationClassParser();
+
+        //refresh之前，把创世界类扫面到bdm中。
+
+        refresh(clazz);
+    }
+
+    private void refresh(Class clazz) {
         try {
-            //scan
+            //scan：完成beanDefinitionMap
             scanAndParse(clazz, defaultListableBeanFactory);
-            //initializeBean
-            initializationBean();
+
+            //initializeBean: 对于单例bean，提前初始化
+            finishBeanFactoryInitialization();
+
             //clear middle status
         } catch (Exception e) {
-            System.out.println(e);
-        }
-
-    }
-
-    private void initializationBean() throws IllegalAccessException, InvocationTargetException, InstantiationException, NoSuchMethodException {
-        Set<String> beanDefinitionNames = defaultListableBeanFactory.beanDefinitionNames;
-        Iterator<String> iterator = beanDefinitionNames.iterator();
-        while (iterator.hasNext()) {
-            String beanName = iterator.next();
-            //new
-            initializebean(beanName);
+            e.printStackTrace();
         }
     }
 
-    private Object initializebean(String beanName) throws InstantiationException, IllegalAccessException, InvocationTargetException, NoSuchMethodException {
+    private void finishBeanFactoryInitialization() {
+        ArrayList<String> beanNames = new ArrayList<>(defaultListableBeanFactory.beanDefinitionNames);
+        for (String beanName : beanNames) {
+            //TODO 当前只支持单例。
+            getBean(beanName);
+        }
+    }
+
+    public Object createBean(String beanName) throws InstantiationException, IllegalAccessException, InvocationTargetException {
         BeanDefinition bd = defaultListableBeanFactory.beanDefinitionMap.get(beanName);
+        if (bd == null) {
+            return null;
+        }
+
+        //推断构造器，使用反射实例化。
         Object o = getObject(bd);
 
+        //在处理autowired之前，提前暴露自己。
+        exposeObject(beanName, o);
+
         //autowired
-        populate(beanName, bd, o);
+        populate(bd, o);
+
+        //TODO
+        //1， 处理autowired
+        //2， 处理生命周期回调
+        //3， 调用beanPostProcessor
 
         defaultListableBeanFactory.getSingletonObjects().put(beanName, o);
+
+        //清理中间状态
+        defaultListableBeanFactory.earlySingletonObjects.remove(beanName);
+        defaultListableBeanFactory.currentlyInCreation.remove(beanName);
+
         return o;
     }
 
-    private void populate(String beanName, BeanDefinition bd, Object o) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+    private void exposeObject(String beanName, Object o) {
+        defaultListableBeanFactory.earlySingletonObjects.put(beanName, o);
+    }
+
+    private void populate(BeanDefinition bd, Object o) {
         Field[] declaredFields = bd.getClassType().getDeclaredFields();
         for (Field field : declaredFields) {
             Autowired annotation = field.getAnnotation(Autowired.class);
@@ -72,8 +94,15 @@ public class ApplicationContext implements BeanFactory {
                 Class<?> type = field.getType();
                 Object bean = getBean(type);
                 if (bean != null) {
-                    Method declaredMethod = bd.getClassType().getDeclaredMethod("set" + StringUtils.captureName(field.getName()), field.getType());
-                    declaredMethod.invoke(o, bean);
+                    boolean accessible = field.isAccessible();
+                    field.setAccessible(true);
+                    try {
+                        field.set(o, bean);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    } finally {
+                        field.setAccessible(accessible);
+                    }
                 }
             }
         }
@@ -87,96 +116,65 @@ public class ApplicationContext implements BeanFactory {
     }
 
     private void scanAndParse(Class clazz, DefaultListableBeanFactory defaultListableBeanFactory) {
-        Set<File> files = scan(clazz);
-        if (null == files || files.isEmpty()) {
-            return;
-        }
+        parser.parse(clazz, defaultListableBeanFactory);
 
-        for (File file : files) {
-            BeanDefinition db = parse(file);
-            if (null != db) {
-                defaultListableBeanFactory.registerBeanDefinition(db.getName(), db);
-            }
-        }
-
-        System.out.println(defaultListableBeanFactory.getBeanDefinitionMap());
-
-    }
-
-    private BeanDefinition parse(File file) {
-        Class<?> aClass = null;
-        String absolutePath = file.getAbsolutePath();
-        String clazz = absolutePath.replace(FileUtils.rootPath(), "").replace(".class", "").replace(File.separatorChar, '.');
-
-        try {
-            aClass = Class.forName(clazz);
-        } catch (ClassNotFoundException e) {
-            e.printStackTrace();
-        }
-
-        if (aClass.getAnnotation(Component.class) == null) {
-            return null;
-        }
-
-        BeanDefinition beanDefinition = new BeanDefinition();
-        beanDefinition.setClassType(aClass);
-        beanDefinition.setName(aClass.getSimpleName());
-
-        return beanDefinition;
-    }
-
-    private Set<File> scan(Class clazz) {
-        ComponentScan annotation = (ComponentScan) clazz.getAnnotation(ComponentScan.class);
-        if (annotation == null) {
-            System.out.println("Invalid configuration class");
-            System.exit(-1);
-            return null;
-        }
-        String scanPackagePath = annotation.value();
-
-        String scanPath = new StringBuilder(FileUtils.rootPath()).append(scanPackagePath.replace(".", File.separator)).toString();
-        HashSet<File> files = new HashSet<>();
-        FileUtils.listAllFiles(new File(scanPath), files);
-        System.out.println(files);
-
-        Set<File> filteredSet = files.stream().filter(file -> file.getName().endsWith(".class")).collect(Collectors.toSet());
-
-        return filteredSet;
+        //调用beanFactoryProcessor
     }
 
     @Override
     public Object getBean(String name) {
-        Object bean = this.defaultListableBeanFactory.getBean(name);
+        Object bean = getSingleton(name);
+
         if (bean != null) {
             return bean;
         }
 
-        try {
-            return initializebean(name);
-        } catch (InstantiationException e) {
-            e.printStackTrace();
-        } catch (IllegalAccessException e) {
-            e.printStackTrace();
-        } catch (InvocationTargetException e) {
-            e.printStackTrace();
-        } catch (NoSuchMethodException e) {
-            e.printStackTrace();
-        }
+        return getSingleton(name, () -> {
+            try {
+                return createBean(name);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            return null;
+        });
+    }
 
-        return null;
+    public Object getSingleton(String beanName) {
+        Object singletonObject = defaultListableBeanFactory.singletonObjects.get(beanName);
+        if (singletonObject == null && defaultListableBeanFactory.currentlyInCreation.contains(beanName)) {
+            singletonObject = defaultListableBeanFactory.earlySingletonObjects.get(beanName);
+        }
+        return singletonObject;
+    }
+
+    public Object getSingleton(String beanName, ObjectFactory factory) {
+
+        beforeSingletonCreation(beanName);
+        Object o = defaultListableBeanFactory.getSingletonObjects().get(beanName);
+        if (o == null) {
+            //TODO 处理代理。
+            return factory.get();
+        }
+        return o;
+    }
+
+    private void beforeSingletonCreation(String beanName) {
+        defaultListableBeanFactory.currentlyInCreation.add(beanName);
     }
 
     @Override
     public <V> V getBean(Class<V> clazz) {
         String[] strings = defaultListableBeanFactory.allBeanNameByType.get(clazz);
+        if (null == strings || strings.length == 0) {
+            System.err.println("no candidate bean found");
+            return null;
+        }
+
         if (strings.length > 1) {
             System.err.println("duplicated bean found");
         }
 
-        if (null == strings || strings.length == 0) {
-            System.err.println("no candidate bean found");
-        }
         String beanName = strings[0];
-        return (V)getBean(beanName);
+        return (V) getBean(beanName);
     }
 }

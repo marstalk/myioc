@@ -14,17 +14,6 @@ public class A {
     private B b;
 
     public void hi(){
-        System.out.println(this);
-        System.out.println("Hi");
-        System.out.println(b);
-        b.hi();
-    }
-
-    public B getB() {
-        return b;
-    }
-
-    public void setB(B b) {
-        this.b = b;
+        System.out.println(this + " say Hi" + ", contains b = " + b);
     }
 }

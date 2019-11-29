@@ -1,5 +1,6 @@
 package com.marstalk.test;
 
+import com.marstalk.annotation.Autowired;
 import com.marstalk.annotation.Component;
 
 /**
@@ -9,7 +10,10 @@ import com.marstalk.annotation.Component;
 @Component
 public class B {
 
+    @Autowired
+    private A a;
+
     public void hi(){
-        System.out.println("b say hi");
+        System.out.println(this + " say Hi" + ", contains a = " + a);
     }
 }

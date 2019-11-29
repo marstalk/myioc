@@ -15,10 +15,10 @@ public class App
 {
     public static void main( String[] args ) throws IllegalAccessException, InvocationTargetException, InstantiationException {
         ApplicationContext applicationContext = new ApplicationContext(App.class);
-        A a = (A)applicationContext.getBean("A");
+        A a = (A)applicationContext.getBean("a");
         a.hi();
 
-        a = (A)applicationContext.getBean("A");
-        a.hi();
+        B b = applicationContext.getBean(B.class);
+        b.hi();
     }
 }

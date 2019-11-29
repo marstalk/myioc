@@ -4,10 +4,7 @@ import com.marstalk.parser.ConfigurationClassParser;
 import com.marstalk.register.BeanDefinition;
 import com.marstalk.register.Registry;
 
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -19,7 +16,9 @@ public class DefaultListableBeanFactory implements BeanFactory, Registry {
     protected final Map<String, Object> singletonObjects = new ConcurrentHashMap<>(256);
     protected final Map<String, BeanDefinition> beanDefinitionMap = new ConcurrentHashMap<>(256);
     protected final Map<Class<?>, String[]> allBeanNameByType = new ConcurrentHashMap<>(64);
-    protected final Set<String> beanDefinitionNames = new HashSet<>();
+    protected final List<String> beanDefinitionNames = new ArrayList<>(256);
+    protected final Map<String, Object> earlySingletonObjects = new ConcurrentHashMap<>(64);
+    protected final Set<String> currentlyInCreation = new HashSet<>();
 
 
     @Override
